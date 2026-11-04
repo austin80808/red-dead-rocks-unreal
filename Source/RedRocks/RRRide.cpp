@@ -71,6 +71,9 @@ ARRRide::ARRRide()
 	SledParts.Add(Part(this, Visual, TEXT("SledCurl"), Cyl, FVector(70, 0, 24), Axle, FVector(0.26f, 0.26f, 0.48f)));
 	SledParts.Add(Part(this, Visual, TEXT("SledRailL"), Cube, FVector(0, -21, 5), FRotator::ZeroRotator, FVector(1.25f, 0.03f, 0.05f)));
 	SledParts.Add(Part(this, Visual, TEXT("SledRailR"), Cube, FVector(0, 21, 5), FRotator::ZeroRotator, FVector(1.25f, 0.03f, 0.05f)));
+	// Inner tube: a fat black ring with a darker middle.
+	TubeParts.Add(Part(this, Visual, TEXT("TubeRing"), Cyl, FVector(0, 0, 14), FRotator::ZeroRotator, FVector(1.25f, 1.25f, 0.28f)));
+	TubeParts.Add(Part(this, Visual, TEXT("TubeHole"), Cyl, FVector(0, 0, 16), FRotator::ZeroRotator, FVector(0.62f, 0.62f, 0.29f)));
 	SledParts.Add(Part(this, Visual, TEXT("SledRopeBar"), Cube, FVector(52, 0, 40), FRotator::ZeroRotator, FVector(0.03f, 0.5f, 0.03f)));
 }
 
@@ -78,10 +81,12 @@ void ARRRide::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	const bool bCart = Kind == ERRRideKind::Cart;
+	const bool bTube = Kind == ERRRideKind::Tube;
 	for (UStaticMeshComponent* P : CartParts) P->SetVisibility(bCart);
-	for (UStaticMeshComponent* P : SledParts) P->SetVisibility(!bCart);
-	// The rider stands in the basket, or kneels on the sled.
-	Seat->SetRelativeLocation(bCart ? FVector(-6, 0, 58 + 92) : FVector(-15, 0, 16 + 70));
+	for (UStaticMeshComponent* P : SledParts) P->SetVisibility(Kind == ERRRideKind::Sled);
+	for (UStaticMeshComponent* P : TubeParts) P->SetVisibility(bTube);
+	// The rider stands in the basket, kneels on the sled, or sits in the tube.
+	Seat->SetRelativeLocation(bCart ? FVector(-6, 0, 58 + 92) : bTube ? FVector(0, 0, 22 + 62) : FVector(-15, 0, 16 + 70));
 }
 
 void ARRRide::BeginPlay()
@@ -96,6 +101,14 @@ void ARRRide::BeginPlay()
 			const bool bWheel = P->GetName().Contains(TEXT("Wheel"));
 			M->SetVectorParameterValue(TEXT("Color"), bRed ? FLinearColor(0.8f, 0.05f, 0.03f)
 				: bWheel ? FLinearColor(0.02f, 0.02f, 0.02f) : FLinearColor(0.62f, 0.64f, 0.66f));
+		}
+	}
+	for (UStaticMeshComponent* P : TubeParts)
+	{
+		if (UMaterialInstanceDynamic* M = P->CreateDynamicMaterialInstance(0))
+		{
+			M->SetVectorParameterValue(TEXT("Color"), P->GetName().Contains(TEXT("Hole"))
+				? FLinearColor(0.01f, 0.05f, 0.06f) : FLinearColor(0.015f, 0.015f, 0.017f));
 		}
 	}
 	for (UStaticMeshComponent* P : SledParts)
@@ -120,15 +133,23 @@ void ARRRide::ResetToHome()
 	SnapToGround();
 }
 
-FString ARRRide::GetRideName() const { return Kind == ERRRideKind::Cart ? TEXT("Shopping cart") : TEXT("Sled"); }
+FString ARRRide::GetRideName() const
+{
+	return Kind == ERRRideKind::Cart ? TEXT("Shopping cart") : Kind == ERRRideKind::Tube ? TEXT("Inner tube") : TEXT("Sled");
+}
 
 FString ARRRide::GetPrompt() const
 {
-	return Kind == ERRRideKind::Cart ? TEXT("climb into the shopping cart") : TEXT("hop on the sled");
+	return Kind == ERRRideKind::Cart ? TEXT("climb into the shopping cart")
+		: Kind == ERRRideKind::Tube ? TEXT("grab an inner tube") : TEXT("hop on the sled");
 }
 
 FString ARRRide::GetBoardMessage() const
 {
+	if (Kind == ERRRideKind::Tube)
+	{
+		return TEXT("Float on.  W paddles, A/D steer, the creek does the rest.");
+	}
 	if (Kind == ERRRideKind::Cart)
 	{
 		return DestinationName.IsEmpty() ? FString(TEXT("Hold on."))
@@ -161,14 +182,18 @@ void ARRRide::Mount(ARRExplorer* InRider)
 	Rider = InRider;
 	bArrived = false;
 	RouteIndex = 0;
+	TubeSpeed = 0.f;
+	TubeLateral = 0.f;
 	if (Route.Num() > 1)
 	{
+		BuildRouteDist();
 		float Best = TNumericLimits<float>::Max();
 		for (int32 i = 0; i < Route.Num(); ++i)
 		{
 			const float D = FVector::DistSquared2D(Route[i], GetActorLocation());
 			if (D < Best) { Best = D; RouteIndex = i; }
 		}
+		TubeS = RouteDist[RouteIndex];
 	}
 	TopSpeed = 0.f;
 	MaxAirTime = 0.f;
@@ -222,6 +247,7 @@ float ARRRide::RollingResistance() const
 {
 	const ARRWeather* W = ARRWeather::Find(this);
 	const float Snow = W ? W->GetSnow() : 0.f;
+	if (Kind == ERRRideKind::Tube) return 0.02f; // floating
 	if (Kind == ERRRideKind::Sled)
 	{
 		// Snow makes a sled fly; bare red dirt barely lets it creep.
@@ -237,6 +263,7 @@ float ARRRide::LateralGrip() const
 	const ARRWeather* W = ARRWeather::Find(this);
 	const float Snow = W ? W->GetSnow() : 0.f;
 	if (Kind == ERRRideKind::Sled) return 2.6f;
+	if (Kind == ERRRideKind::Tube) return 3.5f;
 	return FMath::Lerp(9.f, 2.2f, Snow); // carts drift on snow
 }
 
@@ -266,6 +293,64 @@ bool ARRRide::RouteFrame(const FVector& P, FVector& OutDir, float& OutLateral) c
 	return FMath::Sqrt(Best) < 3000.f; // within 30 m counts as on the road
 }
 
+void ARRRide::BuildRouteDist()
+{
+	RouteDist.SetNum(Route.Num());
+	float Acc = 0.f;
+	for (int32 i = 0; i < Route.Num(); ++i)
+	{
+		if (i) Acc += FVector::Dist2D(Route[i - 1], Route[i]);
+		RouteDist[i] = Acc;
+	}
+}
+
+FVector ARRRide::RouteAt(float S, FVector& OutDir) const
+{
+	int32 i = 0;
+	while (i < RouteDist.Num() - 2 && RouteDist[i + 1] < S) ++i;
+	const float Seg = FMath::Max(RouteDist[i + 1] - RouteDist[i], 1.f);
+	const float T = FMath::Clamp((S - RouteDist[i]) / Seg, 0.f, 1.f);
+	OutDir = (Route[i + 1] - Route[i]).GetSafeNormal2D();
+	const_cast<ARRRide*>(this)->RouteIndex = i;
+	return FMath::Lerp(Route[i], Route[i + 1], T);
+}
+
+void ARRRide::TubeStep(float Dt)
+{
+	// The creek carries the tube: no walls to snag in the canyon, just the current.
+	if (RouteDist.Num() != Route.Num()) BuildRouteDist();
+	const FVector2D In = Rider->GetMoveInput();
+	TubeClock += Dt;
+	const float Target = FMath::Clamp(260.f + 9000.f * RouteGrade(), 260.f, 1300.f)
+		* (In.Y > 0.f ? 1.35f : (In.Y < 0.f ? 0.4f : 1.f));
+	TubeSpeed += FMath::Clamp(Target - TubeSpeed, -300.f, 300.f) * Dt;
+	const float Total = RouteDist.Last();
+	TubeS = FMath::Min(TubeS + TubeSpeed * Dt, Total);
+	if (TubeS >= Total) TubeSpeed = 0.f;
+	// Steer across the creek; the current drifts you back to the middle.
+	const float HalfWidth = 200.f; // keep off the banks the 6.4 m terrain cells round up
+	TubeLateral = FMath::Clamp(TubeLateral + In.X * 180.f * Dt - TubeLateral * 0.25f * Dt, -HalfWidth, HalfWidth);
+	FVector Dir;
+	const FVector C = RouteAt(TubeS, Dir);
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Dir);
+	// Water sits 35 cm over the level in the route (Water.obj); bob on the riffles.
+	const float Bob = FMath::Sin(TubeClock * 2.3f) * (3.f + TubeSpeed * 0.006f);
+	SetActorLocation(C + Right * TubeLateral + FVector(0, 0, 35.f + Bob));
+	Heading = Dir.Rotation().Yaw;
+	Velocity = Dir * TubeSpeed;
+	GroundNormal = FVector::UpVector;
+	bGrounded = true;
+}
+
+float ARRRide::RouteGrade() const
+{
+	if (Route.Num() < 2) return 0.f;
+	const int32 A = FMath::Clamp(RouteIndex, 0, Route.Num() - 1);
+	const int32 B = FMath::Clamp(RouteIndex + 4, 0, Route.Num() - 1);
+	const float Run = FVector::Dist2D(Route[A], Route[B]);
+	return Run > 1.f ? FMath::Max(0.f, (Route[A].Z - Route[B].Z) / Run) : 0.f;
+}
+
 bool ARRRide::TraceGround(const FVector& At, float Below, FHitResult& Out) const
 {
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RRRideGround), true, this);
@@ -289,9 +374,23 @@ void ARRRide::Tick(float Dt)
 {
 	Super::Tick(Dt);
 	if (!Rider && Velocity.IsNearlyZero(1.f) && bGrounded) return;
-	const int32 Steps = FMath::Clamp(FMath::CeilToInt(Dt / (1.f / 120.f)), 1, 8);
-	for (int32 i = 0; i < Steps; ++i) Step(Dt / Steps);
+	if (Kind == ERRRideKind::Tube && Rider && Route.Num() > 1)
+	{
+		TubeStep(Dt);
+	}
+	else
+	{
+		const int32 Steps = FMath::Clamp(FMath::CeilToInt(Dt / (1.f / 120.f)), 1, 8);
+		for (int32 i = 0; i < Steps; ++i) Step(Dt / Steps);
+	}
 	ApplyPose(Dt);
+	if (Kind == ERRRideKind::Tube)
+	{
+		// Tubes turn lazily in the current.
+		const FVector2D In = Rider ? Rider->GetMoveInput() : FVector2D::ZeroVector;
+		Spin += (14.f + 40.f * In.X) * Dt;
+		Visual->SetRelativeRotation(FRotator(0.f, Spin, 0.f));
+	}
 
 	if (Rider)
 	{
@@ -361,7 +460,7 @@ void ARRRide::Step(float Dt)
 		// Cartoon road assist: the cart knows the way to town.
 		FVector RoadDir;
 		float Lateral = 0.f;
-		bOnRoute = Kind == ERRRideKind::Cart && bRoadAssist && Rider && RouteFrame(GetActorLocation(), RoadDir, Lateral);
+		bOnRoute = Kind != ERRRideKind::Sled && bRoadAssist && Rider && RouteFrame(GetActorLocation(), RoadDir, Lateral);
 		if (bOnRoute)
 		{
 			// Lane keeping, unless the rider is steering hard.
@@ -371,7 +470,9 @@ void ARRRide::Step(float Dt)
 				Heading = FMath::FixedTurn(Heading, Want, 140.f * Dt);
 			}
 			// Hold a fun speed: a gravity boost on the gentle grades, a soft brake on the steep ones.
-			const float Target = CruiseSpeed * (Brake > 0.f ? 0.3f : 1.f) * (Throttle > 0.f ? 1.35f : 1.f);
+			// Tubes go with the current: lazy on the flats, quick through the canyon's riffles.
+			const float Base = Kind == ERRRideKind::Tube ? FMath::Clamp(280.f + 9000.f * RouteGrade(), 280.f, 1300.f) : CruiseSpeed;
+			const float Target = Base * (Brake > 0.f ? 0.3f : 1.f) * (Throttle > 0.f ? 1.35f : 1.f);
 			Vf += FMath::Clamp(Target - Vf, -350.f, 450.f) * Dt;
 			// Bumps and kerbs don't throw it sideways.
 			Vr *= FMath::Exp(-6.f * Dt);

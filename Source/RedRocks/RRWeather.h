@@ -31,6 +31,11 @@ public:
 	/** Ground cover, 0 (bare) to 1 (white). */
 	UFUNCTION(BlueprintPure, Category = "RedRocks") float GetSnow() const { return Cover; }
 
+	/** Night: the sun sets, a moon comes up, exposure opens for the dark, the stage lights come on (T). */
+	UFUNCTION(BlueprintCallable, Category = "RedRocks") void ToggleNight() { SetNight(!bNight); }
+	UFUNCTION(BlueprintCallable, Category = "RedRocks") void SetNight(bool bOn);
+	UFUNCTION(BlueprintPure, Category = "RedRocks") bool IsNight() const { return bNight; }
+
 	/** Start the level snowed in. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RedRocks") bool bStartSnowing = false;
 	/** Seconds for bare ground to turn white (and back). */
@@ -45,6 +50,16 @@ private:
 	void TickFlakes(float Dt);
 
 	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<UInstancedStaticMeshComponent> Flakes;
+	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<class UDirectionalLightComponent> Moon;
+
+	bool bNight = false;
+	float NightFade = 0.f; // 1 = full night
+	FLinearColor FogDayColor = FLinearColor::Black;
+	bool bHaveFogColor = false;
+	bool bHaveSunRot = false;
+	FRotator SunDayRot;
+	float ExposureMin = 0.f, ExposureMax = 0.f;
+	bool bHaveExposure = false;
 
 	bool bSnowing = false;
 	float Cover = 0.f;

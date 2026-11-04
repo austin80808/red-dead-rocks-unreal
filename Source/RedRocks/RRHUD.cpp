@@ -44,6 +44,7 @@ void ARRHUD::DrawHUD()
 	if (P->GetHeightAboveGroundM() > 3.f && P->GetHeightAboveGroundM() < 1999.f)
 		Status += FString::Printf(TEXT("   %.0f m up"), P->GetHeightAboveGroundM());
 	Status += FString::Printf(TEXT("\nElevation %.0f m"), (Weather ? Weather->DatumElevationM : 0.f) + P->GetActorLocation().Z / 100.f);
+	if (Weather && Weather->IsNight()) Status += TEXT("\nNight");
 	if (Weather && Weather->GetSnow() > 0.01f) Status += FString::Printf(TEXT("\nSnow %.0f%%"), Weather->GetSnow() * 100.f);
 	Text(Status, 28 * S, 24 * S, Sand, 1.1f * S);
 
@@ -61,7 +62,8 @@ void ARRHUD::DrawHUD()
 			TEXT("Walk into rock to climb\n")
 			TEXT("SPACE in the air: wingsuit, again: chute\n")
 			TEXT("E ride a cart or sled\n")
-			TEXT("N snow   V camera   R respawn   C credits\n\nGO TO\n");
+			TEXT("N snow   T night + concert\n")
+			TEXT("V camera   R respawn   C credits\n\nGO TO\n");
 		const TArray<ARRSpot*>& Spots = P->GetSpots();
 		for (int32 i = 0; i < Spots.Num() && i < 9; ++i)
 		{
