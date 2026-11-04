@@ -1,0 +1,13 @@
+# Unreal rebuilds all of these; never commit them.
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.sln
+*.xcworkspace
+.vs/
+.idea/
+
+# Local backups and macOS cruft
+*.bak*
+.DS_Store
