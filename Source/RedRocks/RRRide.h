@@ -13,7 +13,8 @@ UENUM(BlueprintType)
 enum class ERRRideKind : uint8
 {
 	Cart,
-	Sled
+	Sled,
+	Tube
 };
 
 UCLASS()
@@ -75,6 +76,7 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<USceneComponent> Seat;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> CartParts;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> SledParts;
+	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> TubeParts;
 	UPROPERTY() TObjectPtr<ARRExplorer> Rider;
 
 	FVector Velocity = FVector::ZeroVector;
@@ -88,5 +90,16 @@ private:
 	FTransform Home;
 	bool bArrived = false;
 	int32 RouteIndex = 0;
+	float Spin = 0.f;
+	// Tubes ride the creek on rails: distance along the route and offset across it (cm).
+	float TubeS = 0.f;
+	float TubeLateral = 0.f;
+	float TubeSpeed = 0.f;
+	float TubeClock = 0.f;
+	TArray<float> RouteDist;
+	void TubeStep(float Dt);
+	void BuildRouteDist();
+	FVector RouteAt(float S, FVector& OutDir) const;
+	float RouteGrade() const;
 	bool bOnRoute = false;
 };

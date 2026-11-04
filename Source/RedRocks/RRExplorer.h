@@ -69,6 +69,8 @@ public:
 	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRGo(int32 SpotNumber);
 	/** Toggle snow (N). */
 	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRSnow();
+	/** Toggle night and the concert (T). */
+	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRNight();
 	/** Scripted input for play-tests: Move.X right, Move.Y forward, held until changed. */
 	UFUNCTION(BlueprintCallable, Category = "RedRocks|Test") void ScriptMove(FVector2D Move, bool bSprint);
 	/** Scripted key press: Jump, Interact, Drop, Respawn, Camera, Snow, Help. */

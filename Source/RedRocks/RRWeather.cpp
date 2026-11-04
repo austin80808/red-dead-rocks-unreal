@@ -6,6 +6,7 @@
 #include "Components/SkyLightComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
+#include "Engine/PostProcessVolume.h"
 #include "Engine/SkyLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -34,6 +35,16 @@ ARRWeather::ARRWeather()
 	Flakes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Flakes->SetCastShadow(false);
 	Flakes->SetGenerateOverlapEvents(false);
+	Moon = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Moon"));
+	Moon->SetupAttachment(Root);
+	Moon->SetUsingAbsoluteRotation(true);
+	Moon->SetWorldRotation(FRotator(-38.f, 210.f, 0.f));
+	Moon->SetIntensity(0.f);
+	Moon->SetLightColor(FLinearColor(0.55f, 0.65f, 1.f));
+	Moon->SetAtmosphereSunLightIndex(1);
+	Moon->SetAtmosphereSunLight(true);
+	Moon->SetCastShadows(true);
+	Moon->SetVisibility(false);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereF(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	Flakes->SetStaticMesh(SphereF.Object);
 	static ConstructorHelpers::FObjectFinder<UMaterialParameterCollection> MpcF(
@@ -93,6 +104,70 @@ void ARRWeather::BeginPlay()
 
 void ARRWeather::SetSnowing(bool bOn) { bSnowing = bOn; }
 
+void ARRWeather::SetNight(bool bOn)
+{
+	bNight = bOn;
+	ADirectionalLight* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(this, ADirectionalLight::StaticClass()));
+	if (Sun)
+	{
+		if (!bHaveSunRot)
+		{
+			SunDayRot = Sun->GetActorRotation();
+			bHaveSunRot = true;
+		}
+		// Below the horizon: the sky atmosphere goes to dusk-blue, then dark.
+		FRotator R = SunDayRot;
+		R.Pitch = bOn ? 12.f : SunDayRot.Pitch;
+		Sun->SetActorRotation(R);
+	}
+	// The level's sun is stationary, so it can't be moved at runtime: switch it off instead.
+	if (Sun && SunBase >= 0.f)
+	{
+		Sun->GetLightComponent()->SetIntensity(bOn ? 0.f : SunBase * FMath::Lerp(1.f, 0.22f, Falling));
+	}
+	Moon->SetVisibility(bOn);
+	Moon->SetIntensity(bOn ? 0.6f : 0.f); // lux: a bright moon
+	// Open the exposure for the dark, put it back by day.
+	for (TActorIterator<APostProcessVolume> It(GetWorld()); It; ++It)
+	{
+		FPostProcessSettings& P = It->Settings;
+		if (!bHaveExposure)
+		{
+			ExposureMin = P.AutoExposureMinBrightness;
+			ExposureMax = P.AutoExposureMaxBrightness;
+			bHaveExposure = true;
+		}
+		P.bOverride_AutoExposureMinBrightness = true;
+		P.bOverride_AutoExposureMaxBrightness = true;
+		// Moonlit ground is about EV100 -1; hold it there so the stage lights read as lights.
+		// Eyes adjust in a couple of seconds, not half a minute.
+		P.bOverride_AutoExposureSpeedDown = true;
+		P.bOverride_AutoExposureSpeedUp = true;
+		P.AutoExposureSpeedDown = 6.f;
+		P.AutoExposureSpeedUp = 6.f;
+		P.AutoExposureMinBrightness = bOn ? -1.5f : ExposureMin;
+		P.AutoExposureMaxBrightness = bOn ? 0.5f : ExposureMax;
+	}
+	// Haze catches the stage beams at night.
+	if (AExponentialHeightFog* Fog = Cast<AExponentialHeightFog>(UGameplayStatics::GetActorOfClass(this, AExponentialHeightFog::StaticClass())))
+	{
+		UExponentialHeightFogComponent* F = Fog->GetComponent();
+		if (!bHaveFogColor)
+		{
+			FogDayColor = F->FogInscatteringLuminance;
+			bHaveFogColor = true;
+		}
+		// The fog's own glow is a fixed daytime colour: darken it, or the night is a white haze.
+		F->SetFogInscatteringColor(bOn ? FLinearColor(0.002f, 0.003f, 0.006f) : FogDayColor);
+		// No volumetric fog at night: it scatters the sky light into a white haze over everything.
+	}
+	if (ASkyLight* Sky = Cast<ASkyLight>(UGameplayStatics::GetActorOfClass(this, ASkyLight::StaticClass())))
+	{
+		if (SkyBase >= 0.f) Sky->GetLightComponent()->SetIntensity(SkyBase * (bOn ? 0.35f : 1.f));
+		Sky->GetLightComponent()->RecaptureSky();
+	}
+}
+
 void ARRWeather::SetSnowNow(bool bOn)
 {
 	bSnowing = bOn;
@@ -122,13 +197,13 @@ void ARRWeather::ApplyCover()
 	// Overcast: a dimmer sun, a brighter share of sky, thicker fog.
 	if (SunBase >= 0.f)
 		if (ADirectionalLight* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(this, ADirectionalLight::StaticClass())))
-			Sun->GetLightComponent()->SetIntensity(SunBase * FMath::Lerp(1.f, 0.22f, Falling));
+			Sun->GetLightComponent()->SetIntensity(bNight ? 0.f : SunBase * FMath::Lerp(1.f, 0.22f, Falling));
 	if (FogBase >= 0.f)
 		if (AExponentialHeightFog* Fog = Cast<AExponentialHeightFog>(UGameplayStatics::GetActorOfClass(this, AExponentialHeightFog::StaticClass())))
 			Fog->GetComponent()->SetFogDensity(FogBase * FMath::Lerp(1.f, 6.f, Falling));
 	if (SkyBase >= 0.f)
 		if (ASkyLight* Sky = Cast<ASkyLight>(UGameplayStatics::GetActorOfClass(this, ASkyLight::StaticClass())))
-			Sky->GetLightComponent()->SetIntensity(SkyBase * FMath::Lerp(1.f, 1.6f, Falling));
+			Sky->GetLightComponent()->SetIntensity(SkyBase * FMath::Lerp(1.f, 1.6f, Falling) * (bNight ? 0.35f : 1.f));
 }
 
 void ARRWeather::TickFlakes(float Dt)

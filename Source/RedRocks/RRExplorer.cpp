@@ -257,6 +257,7 @@ void ARRExplorer::PollKeys()
 	if (PC->WasInputKeyJustPressed(EKeys::V)) HandleAction(TEXT("Camera"));
 	if (PC->WasInputKeyJustPressed(EKeys::N)) HandleAction(TEXT("Snow"));
 	if (PC->WasInputKeyJustPressed(EKeys::H)) HandleAction(TEXT("Help"));
+	if (PC->WasInputKeyJustPressed(EKeys::T)) HandleAction(TEXT("Night"));
 	static const FKey Numbers[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five,
 		EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine};
 	for (int32 i = 0; i < UE_ARRAY_COUNT(Numbers); ++i)
@@ -308,6 +309,7 @@ void ARRExplorer::HandleAction(FName Action)
 	else if (Action == TEXT("Respawn")) RRGo(LastSpot > 0 ? LastSpot : 1);
 	else if (Action == TEXT("Camera")) bChaseCam = !bChaseCam;
 	else if (Action == TEXT("Snow")) RRSnow();
+	else if (Action == TEXT("Night")) RRNight();
 	else if (Action == TEXT("Help")) bShowHelp = !bShowHelp;
 }
 
@@ -685,7 +687,12 @@ void ARRExplorer::UpdateCamera(float Dt)
 	{
 	case ERRMode::Wingsuit: WantArm = 650.f; WantOffset = FVector(0, 0, 90); bLag = true; break;
 	case ERRMode::Parachute: WantArm = 900.f; WantOffset = FVector(0, 0, 250); bLag = true; break;
-	case ERRMode::Ride: WantArm = 520.f; WantOffset = FVector(0, 0, 110); bLag = true; break;
+	case ERRMode::Ride:
+		// Tubes sit low in a canyon: look down the creek from higher and closer.
+		if (Ride && Ride->Kind == ERRRideKind::Tube) { WantArm = 380.f; WantOffset = FVector(0, 0, 260); }
+		else { WantArm = 520.f; WantOffset = FVector(0, 0, 110); }
+		bLag = true;
+		break;
 	default:
 		if (bChaseCam) { WantArm = 380.f; WantOffset = FVector(0, 0, 50); }
 		break;
@@ -826,6 +833,15 @@ void ARRExplorer::RRSnow()
 	else
 	{
 		Toast(TEXT("No weather in this level."), 2.f);
+	}
+}
+
+void ARRExplorer::RRNight()
+{
+	if (ARRWeather* W = ARRWeather::Find(this))
+	{
+		W->ToggleNight();
+		Toast(W->IsNight() ? TEXT("Night falls.  The band is on: press 1 for the stage.") : TEXT("Morning."), 3.f);
 	}
 }
 
