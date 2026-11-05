@@ -70,8 +70,9 @@ ARRExplorer::ARRExplorer()
 	Move->MaxWalkSpeed = WalkSpeed;
 	Move->JumpZVelocity = 520.f;
 	Move->AirControl = 0.4f;
-	// Bench rows are 0.45 m tall: let the player step up them instead of jumping each one.
-	Move->MaxStepHeight = 52.f;
+	// Walk straight up the terraced rows instead of jumping each one: their risers
+	// run 36 cm at the bottom to 54 cm at the top (red-dead-rocks redrocks.seating).
+	Move->MaxStepHeight = 58.f;
 	Move->SetWalkableFloorAngle(46.f);
 	Move->MaxFlySpeed = 20000.f;
 	Move->BrakingDecelerationFlying = 0.f;
