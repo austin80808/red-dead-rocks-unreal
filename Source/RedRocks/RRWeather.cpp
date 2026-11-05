@@ -38,7 +38,10 @@ ARRWeather::ARRWeather()
 	Moon = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Moon"));
 	Moon->SetupAttachment(Root);
 	Moon->SetUsingAbsoluteRotation(true);
-	Moon->SetWorldRotation(FRotator(-38.f, 210.f, 0.f));
+	// Moonlight travels toward the WSW (the moon in the ENE). The level puts north
+	// on -Y (red-dead-rocks unreal/level_frame.py), so that is yaw 150 (it was 210
+	// when the level was a mirror image).
+	Moon->SetWorldRotation(FRotator(-38.f, 150.f, 0.f));
 	Moon->SetIntensity(0.f);
 	Moon->SetLightColor(FLinearColor(0.55f, 0.65f, 1.f));
 	Moon->SetAtmosphereSunLightIndex(1);
