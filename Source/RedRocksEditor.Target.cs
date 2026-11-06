@@ -7,6 +7,6 @@ public class RedRocksEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
-		ExtraModuleNames.Add("RedRocks");
+		ExtraModuleNames.AddRange(new string[] { "RedRocks", "RedRocksEditor" });
 	}
 }

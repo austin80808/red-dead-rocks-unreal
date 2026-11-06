@@ -42,6 +42,10 @@
 		{
 			"Name": "AllToolsets",
 			"Enabled": true
+		},
+		{
+			"Name": "HairStrands",
+			"Enabled": true
 		}
 	],
 	"Modules": [
@@ -52,6 +56,16 @@
 			"AdditionalDependencies": [
 				"Engine",
 				"EnhancedInput"
+			]
+		},
+		{
+			"Name": "RedRocksEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"HairStrandsCore",
+				"HairStrandsEditor"
 			]
 		}
 	]

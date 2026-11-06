@@ -11,6 +11,7 @@
 class UCameraComponent;
 class USpringArmComponent;
 class UStaticMeshComponent;
+class UGroomComponent;
 class UInputAction;
 class UInputMappingContext;
 class ARRRide;
@@ -56,6 +57,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "RedRocks") ARRRide* GetRide() const { return Ride; }
 	/** What the last climb check saw (for play-tests). */
 	UFUNCTION(BlueprintPure, Category = "RedRocks|Test") FString GetClimbProbe() const { return ClimbProbe; }
+	/** True once the sasquatch mesh, fur and animation loaded (else the blocky figure stands in). */
+	UFUNCTION(BlueprintPure, Category = "RedRocks") bool IsSasquatch() const { return bSasquatch; }
+	/** True while the camera is pulled back behind him (V, rides, wingsuit, parachute). */
+	UFUNCTION(BlueprintPure, Category = "RedRocks") bool IsThirdPerson() const;
 	const TArray<ARRSpot*>& GetSpots() const { return Spots; }
 
 	/** Show a message in the middle of the screen for a few seconds. */
@@ -77,6 +82,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RedRocks|Test") void ScriptPress(FName Action);
 	/** Point the view: yaw and pitch in degrees. */
 	UFUNCTION(BlueprintCallable, Category = "RedRocks|Test") void ScriptLook(float Yaw, float Pitch);
+	/** Photo mode: orbit the camera around him without turning him. Yaw is from
+	 *  his facing (0 = in front of him looking back at him, 90 = his right side),
+	 *  negative pitch looks down from above; Arm 0 leaves photo mode. Console: RRPhoto 30 -5 380 */
+	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRPhoto(float Yaw, float Pitch, float Arm);
 	/** Hand control back to the keyboard. */
 	UFUNCTION(BlueprintCallable, Category = "RedRocks|Test") void ScriptRelease();
 
@@ -92,6 +101,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<USceneComponent> WingRig;
 	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<USceneComponent> ChuteRig;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> BodyParts;
+	/** The sasquatch's fur: the body, and the head (hidden from your own first-person view). */
+	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<UGroomComponent> BodyFur;
+	UPROPERTY(VisibleAnywhere, Category = "RedRocks") TObjectPtr<UGroomComponent> HeadFur;
 
 	UPROPERTY() TObjectPtr<UInputAction> MoveAction;
 	UPROPERTY() TObjectPtr<UInputAction> LookAction;
@@ -109,6 +121,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Wingsuit") float WingsuitDrag = 1.6e-5f;
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Wingsuit") float WingsuitSink = 180.f;
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Wingsuit") float WingsuitCrashSpeed = 2600.f;
+	/** His size against the mannequin whose animations he plays (redrocks.sasquatch's SCALE). */
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Sasquatch") float SasquatchScale = 1.42f;
+	/** Fastest ground speed in the locomotion blend space, mannequin cm/s; faster than this the cycle speeds up. */
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Sasquatch") float AnimTopSpeed = 500.f;
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Sasquatch") float ChaseArm = 420.f;
 
 private:
 	void OnMove(const FInputActionValue& Value);
@@ -124,6 +141,8 @@ private:
 	void UpdateCamera(float Dt);
 	void UpdateBodyPose(float Dt);
 	void UpdateHint();
+	void SetupSasquatch();
+	void UpdateSasquatchAnim();
 
 	// Climbing
 	bool FindWall(const FVector& Dir, FVector& OutPoint, FVector& OutNormal, int32& OutHits) const;
@@ -153,6 +172,10 @@ private:
 	FVector2D ScriptedMove = FVector2D::ZeroVector;
 	bool bScriptedSprint = false;
 	bool bChaseCam = false;
+	bool bSasquatch = false;
+	bool bPhoto = false;
+	FRotator PhotoRot = FRotator::ZeroRotator;
+	float PhotoArm = 0.f;
 
 	FVector WallNormal = FVector::ForwardVector;
 	float NoGrabTime = 0.f;
