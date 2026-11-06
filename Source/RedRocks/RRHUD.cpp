@@ -63,7 +63,7 @@ void ARRHUD::DrawHUD()
 			TEXT("SPACE in the air: wingsuit, again: chute\n")
 			TEXT("E ride a cart or sled\n")
 			TEXT("N snow   T night + concert\n")
-			TEXT("V camera   R respawn   C credits\n\nGO TO\n");
+			TEXT("V first / third person   R respawn   C credits\n\nGO TO\n");
 		const TArray<ARRSpot*>& Spots = P->GetSpots();
 		for (int32 i = 0; i < Spots.Num() && i < 9; ++i)
 		{

@@ -5,7 +5,13 @@
 #include "RRWeather.h"
 
 #include "Camera/CameraComponent.h"
+#include "Animation/AnimInstance.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
+#include "GroomAsset.h"
+#include "GroomBindingAsset.h"
+#include "GroomComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -25,7 +31,19 @@
 namespace
 {
 	constexpr float Gravity = 980.f;
-	constexpr float EyeHeight = 64.f;
+	// The sasquatch: a 2.56 m capsule, eyes 2.28 m up (100 cm over its centre).
+	constexpr float CapsuleRadius = 42.f;
+	constexpr float CapsuleHalfHeight = 128.f;
+	constexpr float EyeHeight = 100.f;
+	// The climb probes were tuned on a 92 cm half-height capsule; they scale with his.
+	constexpr float ProbeScale = CapsuleHalfHeight / 92.f;
+
+	const TCHAR* SasquatchMesh = TEXT("/Game/Sasquatch/SKM_Sasquatch.SKM_Sasquatch");
+	const TCHAR* SasquatchAnim = TEXT("/Game/Sasquatch/Anims/ABP_Sasquatch.ABP_Sasquatch_C");
+	const TCHAR* BodyGroom = TEXT("/Game/Sasquatch/GR_Sasquatch_Body.GR_Sasquatch_Body");
+	const TCHAR* BodyBinding = TEXT("/Game/Sasquatch/GB_Sasquatch_Body.GB_Sasquatch_Body");
+	const TCHAR* HeadGroom = TEXT("/Game/Sasquatch/GR_Sasquatch_Head.GR_Sasquatch_Head");
+	const TCHAR* HeadBinding = TEXT("/Game/Sasquatch/GB_Sasquatch_Head.GB_Sasquatch_Head");
 	// A floor is walkable up to this steepness (normal Z); anything steeper can be climbed.
 	constexpr float ClimbMaxNormalZ = 0.74f;
 	constexpr float ClimbMinNormalZ = -0.35f;
@@ -61,7 +79,7 @@ ARRExplorer::ARRExplorer()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	GetCapsuleComponent()->InitCapsuleSize(34.f, 92.f);
+	GetCapsuleComponent()->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
 	bUseControllerRotationYaw = true;
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll = false;
@@ -93,7 +111,8 @@ ARRExplorer::ARRExplorer()
 	Camera->bUsePawnControlRotation = false;
 	Camera->SetFieldOfView(90.f);
 
-	// A blocky figure, only seen from the chase camera (rides, wingsuit, V).
+	// A blocky figure, only seen from the chase camera (rides, wingsuit, V); the
+	// sasquatch replaces it when his assets are in the project (SetupSasquatch).
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeF(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereF(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylF(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
@@ -109,6 +128,20 @@ ARRExplorer::ARRExplorer()
 	BodyParts.Add(AddPart(this, Body, TEXT("ArmR"), Cube, FVector(0, 24, 20), FRotator::ZeroRotator, FVector(0.11f, 0.11f, 0.55f)));
 	BodyParts.Add(AddPart(this, Body, TEXT("LegL"), Cube, FVector(0, -10, -55), FRotator::ZeroRotator, FVector(0.13f, 0.13f, 0.75f)));
 	BodyParts.Add(AddPart(this, Body, TEXT("LegR"), Cube, FVector(0, 10, -55), FRotator::ZeroRotator, FVector(0.13f, 0.13f, 0.75f)));
+
+	// The sasquatch: the character's skeletal mesh under Body (so the wingsuit and
+	// ride poses tilt him), feet on the capsule's base, facing +X. Mesh, fur and
+	// animation are loaded in BeginPlay so a project without them still plays.
+	USkeletalMeshComponent* Sk = GetMesh();
+	Sk->SetupAttachment(Body);
+	Sk->SetRelativeLocation(FVector(0.f, 0.f, -CapsuleHalfHeight));
+	Sk->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	Sk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Sk->SetVisibility(false);
+	BodyFur = CreateDefaultSubobject<UGroomComponent>(TEXT("BodyFur"));
+	BodyFur->SetupAttachment(Sk);
+	HeadFur = CreateDefaultSubobject<UGroomComponent>(TEXT("HeadFur"));
+	HeadFur->SetupAttachment(Sk);
 
 	// Wingsuit membranes between the arms and legs, shown only in flight.
 	WingRig = CreateDefaultSubobject<USceneComponent>(TEXT("WingRig"));
@@ -147,6 +180,7 @@ void ARRExplorer::BeginPlay()
 			Mid->SetVectorParameterValue(TEXT("Color"), PartColor(Part->GetFName()));
 		}
 	}
+	SetupSasquatch();
 	CollectSpots();
 	SetMode(ERRMode::Walk);
 	Toast(TEXT("Welcome to Red Rocks.  H shows the controls."), 5.f);
@@ -243,6 +277,7 @@ void ARRExplorer::Tick(float Dt)
 
 	UpdateCamera(Dt);
 	UpdateBodyPose(Dt);
+	UpdateSasquatchAnim();
 	UpdateHint();
 }
 
@@ -368,8 +403,8 @@ bool ARRExplorer::FindWall(const FVector& Dir, FVector& OutPoint, FVector& OutNo
 	FVector Nearest = FVector::ZeroVector;
 	float NearestDist = TNumericLimits<float>::Max();
 	OutHits = 0;
-	static const float Heights[] = {-55.f, -10.f, 40.f};
-	static const float Sides[] = {-22.f, 0.f, 22.f};
+	static const float Heights[] = {-55.f * ProbeScale, -10.f * ProbeScale, 40.f * ProbeScale};
+	static const float Sides[] = {-28.f, 0.f, 28.f};
 	for (float H : Heights)
 	{
 		for (float S : Sides)
@@ -412,7 +447,7 @@ bool ARRExplorer::TryStartClimb()
 	if (Dist > GetCapsuleComponent()->GetScaledCapsuleRadius() + 45.f) return false;
 	// Not a bench riser or a kerb: the face must reach above the head (a sloping face recedes, so reach further).
 	FHitResult High;
-	const FVector HeadFrom = GetActorLocation() + FVector(0, 0, 95.f);
+	const FVector HeadFrom = GetActorLocation() + FVector(0, 0, 95.f * ProbeScale);
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RRWallHigh), true, this);
 	if (!GetWorld()->LineTraceSingleByChannel(High, HeadFrom, HeadFrom + Fwd * 220.f, ECC_Visibility, Params)) return false;
 
@@ -678,8 +713,47 @@ void ARRExplorer::FellOutOfWorld(const UDamageType& DmgType)
 // ---------------------------------------------------------------------------
 // Camera and figure
 
+void ARRExplorer::RRPhoto(float Yaw, float Pitch, float Arm)
+{
+	bPhoto = Arm > 0.f;
+	PhotoArm = Arm;
+	// The boom points from him to the camera's back: a camera in front of him
+	// (Yaw 0) looks back along -X of his facing.
+	PhotoRot = FRotator(Pitch, GetActorRotation().Yaw + 180.f + Yaw, 0.f);
+	Boom->bUsePawnControlRotation = !bPhoto;
+	Boom->bEnableCameraLag = false;
+	Boom->bEnableCameraRotationLag = false;
+	if (bPhoto)
+	{
+		bUseControllerRotationYaw = false;
+		Boom->SetWorldRotation(PhotoRot);
+		Boom->TargetArmLength = PhotoArm;
+		Boom->SocketOffset = FVector::ZeroVector;
+	}
+	else
+	{
+		SetMode(Mode);
+	}
+}
+
 void ARRExplorer::UpdateCamera(float Dt)
 {
+	if (bPhoto)
+	{
+		Boom->SetWorldRotation(PhotoRot);
+		Boom->TargetArmLength = PhotoArm;
+		if (bSasquatch)
+		{
+			HeadFur->SetOwnerNoSee(false);
+		}
+		else
+		{
+			Body->SetVisibility(true, true);
+			WingRig->SetVisibility(Mode == ERRMode::Wingsuit, true);
+			ChuteRig->SetVisibility(Mode == ERRMode::Parachute, true);
+		}
+		return;
+	}
 	float WantArm = 0.f;
 	FVector WantOffset = FVector::ZeroVector;
 	bool bLag = false;
@@ -694,7 +768,7 @@ void ARRExplorer::UpdateCamera(float Dt)
 		bLag = true;
 		break;
 	default:
-		if (bChaseCam) { WantArm = 380.f; WantOffset = FVector(0, 0, 50); }
+		if (bChaseCam) { WantArm = ChaseArm; WantOffset = FVector(0, 0, 45); }
 		break;
 	}
 	Boom->TargetArmLength = FMath::FInterpTo(Boom->TargetArmLength, WantArm, Dt, 5.f);
@@ -709,6 +783,16 @@ void ARRExplorer::UpdateCamera(float Dt)
 	const float WantFov = 90.f + FMath::Clamp((Speed - 12.f) * 0.45f, 0.f, 22.f);
 	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, WantFov, Dt, 3.f));
 
+	if (bSasquatch)
+	{
+		// He is always there. In first person the camera sits inside his head
+		// (its faces point away, so they cull) and his head fur is hidden from
+		// you, so you look out past the brow and down at his chest, arms and hands.
+		HeadFur->SetOwnerNoSee(!IsThirdPerson());
+		WingRig->SetVisibility(Mode == ERRMode::Wingsuit, true);
+		ChuteRig->SetVisibility(Mode == ERRMode::Parachute, true);
+		return;
+	}
 	const bool bShowBody = Boom->TargetArmLength > 60.f;
 	Body->SetVisibility(bShowBody, true);
 	if (bShowBody)
@@ -716,6 +800,59 @@ void ARRExplorer::UpdateCamera(float Dt)
 		WingRig->SetVisibility(Mode == ERRMode::Wingsuit, true);
 		ChuteRig->SetVisibility(Mode == ERRMode::Parachute, true);
 	}
+}
+
+bool ARRExplorer::IsThirdPerson() const
+{
+	return Boom && Boom->TargetArmLength > 60.f;
+}
+
+void ARRExplorer::SetupSasquatch()
+{
+	USkeletalMesh* MeshAsset = LoadObject<USkeletalMesh>(nullptr, SasquatchMesh);
+	UClass* AnimClass = LoadObject<UClass>(nullptr, SasquatchAnim);
+	if (!MeshAsset)
+	{
+		bSasquatch = false;
+		return;
+	}
+	USkeletalMeshComponent* Sk = GetMesh();
+	Sk->SetSkeletalMesh(MeshAsset);
+	if (AnimClass)
+	{
+		Sk->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		Sk->SetAnimInstanceClass(AnimClass);
+	}
+	Sk->SetVisibility(true);
+	Sk->SetCastShadow(true);
+	BodyFur->SetGroomAsset(LoadObject<UGroomAsset>(nullptr, BodyGroom), LoadObject<UGroomBindingAsset>(nullptr, BodyBinding));
+	HeadFur->SetGroomAsset(LoadObject<UGroomAsset>(nullptr, HeadGroom), LoadObject<UGroomBindingAsset>(nullptr, HeadBinding));
+
+	// The blocky figure goes; the wingsuit and parachute stay, grown to his size.
+	for (int32 i = BodyParts.Num() - 1; i >= 0; --i)
+	{
+		UStaticMeshComponent* Part = BodyParts[i];
+		if (Part && Part->GetAttachParent() == Body)
+		{
+			Part->DestroyComponent();
+			BodyParts.RemoveAt(i);
+		}
+	}
+	WingRig->SetRelativeScale3D(FVector(SasquatchScale));
+	ChuteRig->SetRelativeScale3D(FVector(SasquatchScale));
+	Body->SetVisibility(true, false);
+	bSasquatch = true;
+}
+
+void ARRExplorer::UpdateSasquatchAnim()
+{
+	if (!bSasquatch) return;
+	// The mannequin's cycles on his longer legs cover SasquatchScale times the
+	// ground, so they play slower (a big animal's heavier cadence) and speed up
+	// past the blend space's top speed instead of sliding.
+	const float Speed = GetVelocity().Size2D();
+	const float Over = (Mode == ERRMode::Walk) ? FMath::Max(1.f, Speed / AnimTopSpeed) : 1.f;
+	GetMesh()->GlobalAnimRateScale = Over / SasquatchScale;
 }
 
 void ARRExplorer::UpdateBodyPose(float Dt)
