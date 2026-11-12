@@ -20,12 +20,16 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
 {
 	constexpr float Gravity = 980.f;
-	constexpr float EyeHeight = 64.f;
+	// Eyes 164 cm off the ground: the capsule is 184 cm tall, its centre 92 cm up.
+	constexpr float EyeHeight = 72.f;
+	// The friction the walk tuning is written for (the engine default, about dry concrete).
+	constexpr float ReferenceFriction = 0.7f;
 	// A floor is walkable up to this steepness (normal Z); anything steeper can be climbed.
 	constexpr float ClimbMaxNormalZ = 0.74f;
 	constexpr float ClimbMinNormalZ = -0.35f;
@@ -61,18 +65,24 @@ ARRExplorer::ARRExplorer()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	GetCapsuleComponent()->InitCapsuleSize(34.f, 92.f);
+	// 60 cm across the shoulders, so the 70 cm of tread between a bench and the next riser fits.
+	GetCapsuleComponent()->InitCapsuleSize(30.f, 92.f);
 	bUseControllerRotationYaw = true;
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll = false;
 
 	UCharacterMovementComponent* Move = GetCharacterMovement();
 	Move->MaxWalkSpeed = WalkSpeed;
-	Move->JumpZVelocity = 520.f;
-	Move->AirControl = 0.4f;
+	Move->MaxAcceleration = WalkAcceleration;
+	Move->BrakingDecelerationWalking = WalkBraking;
+	Move->GroundFriction = WalkFriction;
+	// A standing jump lifts the body about half a metre (v^2 / 2g = 49 cm), with next to no steering in the air.
+	Move->JumpZVelocity = 310.f;
+	Move->AirControl = 0.15f;
 	// Walk straight up the terraced rows instead of jumping each one: their risers
-	// run 36 cm at the bottom to 54 cm at the top (red-dead-rocks redrocks.seating).
-	Move->MaxStepHeight = 58.f;
+	// run 36 cm at the bottom to 54 cm at the top, and the bench plank on each riser's
+	// edge is solid and stands 6 cm over the tread (red-dead-rocks redrocks.seating).
+	Move->MaxStepHeight = 62.f;
 	Move->SetWalkableFloorAngle(46.f);
 	Move->MaxFlySpeed = 20000.f;
 	Move->BrakingDecelerationFlying = 0.f;
@@ -149,6 +159,7 @@ void ARRExplorer::BeginPlay()
 		}
 	}
 	CollectSpots();
+	Weather = ARRWeather::Find(this);
 	SetMode(ERRMode::Walk);
 	Toast(TEXT("Welcome to Red Rocks.  H shows the controls."), 5.f);
 }
@@ -228,6 +239,7 @@ void ARRExplorer::Tick(float Dt)
 	case ERRMode::Walk:
 	{
 		Move->MaxWalkSpeed = bSprint ? SprintSpeed : WalkSpeed;
+		UpdateFooting();
 		const FRotator Yaw(0.f, GetControlRotation().Yaw, 0.f);
 		AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::X), MoveInput.Y);
 		AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::Y), MoveInput.X);
@@ -356,8 +368,45 @@ void ARRExplorer::UpdateGroundHeight()
 	}
 }
 
+void ARRExplorer::UpdateFooting()
+{
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	float Friction = ReferenceFriction;
+	Surface.Reset();
+	if (Move->IsMovingOnGround())
+	{
+		// The level's meshes collide on their own triangles, so a complex trace returns the
+		// physical material of the material under the feet (red-dead-rocks unreal/setup_physics.py).
+		FHitResult Hit;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(RRFooting), true, this);
+		Params.bReturnPhysicalMaterial = true;
+		const FVector Feet = GetActorLocation() - FVector(0, 0, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 10.f);
+		if (GetWorld()->LineTraceSingleByChannel(Hit, Feet, Feet - FVector(0, 0, 70.f), ECC_Visibility, Params))
+		{
+			if (const UPhysicalMaterial* Phys = Hit.PhysMaterial.Get())
+			{
+				Friction = Phys->Friction;
+				Surface = Phys->GetName();
+				if (!Surface.RemoveFromStart(TEXT("PM_"))) Surface.Reset(); // the engine default: unnamed ground
+			}
+		}
+		// Packed snow underfoot is about a third as grippy as the bare surface.
+		if (Weather) Friction *= FMath::Lerp(1.f, 0.35f, FMath::Clamp(Weather->GetSnow(), 0.f, 1.f));
+	}
+	Grip = FMath::Clamp(Friction / ReferenceFriction, 0.15f, 1.3f);
+	Move->GroundFriction = WalkFriction * Grip;
+	Move->BrakingDecelerationWalking = WalkBraking * Grip;
+	Move->MaxAcceleration = WalkAcceleration * FMath::Min(Grip, 1.f);
+}
+
 // ---------------------------------------------------------------------------
 // Climbing
+
+bool ARRExplorer::IsClimbable(const FHitResult& Hit) const
+{
+	const AActor* Actor = Hit.GetActor();
+	return !(Actor && Actor->ActorHasTag(TEXT("built")));
+}
 
 bool ARRExplorer::FindWall(const FVector& Dir, FVector& OutPoint, FVector& OutNormal, int32& OutHits) const
 {
@@ -377,7 +426,7 @@ bool ARRExplorer::FindWall(const FVector& Dir, FVector& OutPoint, FVector& OutNo
 		{
 			const FVector From = Center + FVector(0, 0, H) + Right * S;
 			FHitResult Hit;
-			if (GetWorld()->LineTraceSingleByChannel(Hit, From, From + Dir * 110.f, ECC_Visibility, Params))
+			if (GetWorld()->LineTraceSingleByChannel(Hit, From, From + Dir * 110.f, ECC_Visibility, Params) && IsClimbable(Hit))
 			{
 				++OutHits;
 				NormalSum += Hit.ImpactNormal;
@@ -416,6 +465,7 @@ bool ARRExplorer::TryStartClimb()
 	const FVector HeadFrom = GetActorLocation() + FVector(0, 0, 95.f);
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RRWallHigh), true, this);
 	if (!GetWorld()->LineTraceSingleByChannel(High, HeadFrom, HeadFrom + Fwd * 220.f, ECC_Visibility, Params)) return false;
+	if (!IsClimbable(High)) return false;
 
 	WallNormal = Normal;
 	GetCharacterMovement()->Velocity = FVector::ZeroVector;

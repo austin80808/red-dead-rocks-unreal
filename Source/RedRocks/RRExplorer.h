@@ -15,6 +15,7 @@ class UInputAction;
 class UInputMappingContext;
 class ARRRide;
 class ARRSpot;
+class ARRWeather;
 struct FInputActionValue;
 
 UENUM(BlueprintType)
@@ -56,6 +57,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "RedRocks") ARRRide* GetRide() const { return Ride; }
 	/** What the last climb check saw (for play-tests). */
 	UFUNCTION(BlueprintPure, Category = "RedRocks|Test") FString GetClimbProbe() const { return ClimbProbe; }
+	/** What is underfoot, from the floor's physical material: Concrete, Wood, Asphalt, Rock, Soil... ("" in the air). */
+	UFUNCTION(BlueprintPure, Category = "RedRocks") FString GetSurface() const { return Surface; }
+	/** Footing, 1 on dry concrete: the floor's friction (less under snow) scales grip, pick-up and stopping. */
+	UFUNCTION(BlueprintPure, Category = "RedRocks") float GetGrip() const { return Grip; }
 	const TArray<ARRSpot*>& GetSpots() const { return Spots; }
 
 	/** Show a message in the middle of the screen for a few seconds. */
@@ -101,8 +106,13 @@ protected:
 	UPROPERTY() TObjectPtr<UInputMappingContext> MouseLookContext;
 
 	// Tuning, in centimetres and seconds.
-	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float WalkSpeed = 520.f;
-	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float SprintSpeed = 1050.f;
+	// A brisk walk (6.5 km/h) and, on Shift, a run (19 km/h): a person's pace, not a vehicle's.
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float WalkSpeed = 180.f;
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float SprintSpeed = 520.f;
+	// Pick-up, stopping and ground friction on a floor of friction 0.7 (dry concrete); UpdateFooting scales them.
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float WalkAcceleration = 1000.f;
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float WalkBraking = 1400.f;
+	UPROPERTY(EditAnywhere, Category = "RedRocks|Walk") float WalkFriction = 8.f;
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Climb") float ClimbSpeed = 170.f;
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Climb") float ClimbSprintSpeed = 320.f;
 	UPROPERTY(EditAnywhere, Category = "RedRocks|Wingsuit") float WingsuitMinHeight = 500.f;
@@ -121,6 +131,9 @@ private:
 	void HandleAction(FName Action);
 	void SetMode(ERRMode NewMode);
 	void UpdateGroundHeight();
+	void UpdateFooting();
+	/** Rock, ground and the scan can be climbed; anything tagged "built" (stage, walls, cars, poles, rails) cannot. */
+	bool IsClimbable(const FHitResult& Hit) const;
 	void UpdateCamera(float Dt);
 	void UpdateBodyPose(float Dt);
 	void UpdateHint();
@@ -164,12 +177,15 @@ private:
 	float FallTime = 0.f;
 
 	float HeightAboveGround = 0.f;
+	FString Surface;
+	float Grip = 1.f;
 	FString Hint;
 	FString ClimbProbe;
 	FString ToastText;
 	float ToastTimeLeft = 0.f;
 
 	UPROPERTY() TObjectPtr<ARRRide> Ride;
+	UPROPERTY() TObjectPtr<ARRWeather> Weather;
 	UPROPERTY() TArray<TObjectPtr<ARRSpot>> Spots;
 	int32 LastSpot = 0;
 };
