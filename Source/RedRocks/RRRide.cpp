@@ -148,7 +148,8 @@ FString ARRRide::GetBoardMessage() const
 {
 	if (Kind == ERRRideKind::Tube)
 	{
-		return TEXT("Float on.  W paddles, A/D steer, the creek does the rest.");
+		return (Rider && Rider->UsingPad()) ? FString(TEXT("Float on.  Left stick paddles and steers, the creek does the rest."))
+			: FString(TEXT("Float on.  W paddles, A/D steer, the creek does the rest."));
 	}
 	if (Kind == ERRRideKind::Cart)
 	{
@@ -157,12 +158,14 @@ FString ARRRide::GetBoardMessage() const
 	}
 	const ARRWeather* W = ARRWeather::Find(this);
 	return (W && W->GetSnow() > 0.3f) ? FString(TEXT("Fresh powder.  Point it downhill."))
-		: FString(TEXT("Sleds need snow.  Press N to make it snow."));
+		: ((Rider && Rider->UsingPad()) ? FString(TEXT("Sleds need snow.  D-pad down makes it snow."))
+			: FString(TEXT("Sleds need snow.  Press N to make it snow.")));
 }
 
 FString ARRRide::GetRideHint() const
 {
-	FString H = TEXT("W push   S brake   A/D steer   SPACE hop   E get off");
+	FString H = (Rider && Rider->UsingPad()) ? FString(TEXT("L-STICK push, brake, steer   A hop   X get off"))
+		: FString(TEXT("W push   S brake   A/D steer   SPACE hop   E get off"));
 	const float D = GetDistanceToDestinationM();
 	if (D >= 0.f && !bArrived)
 	{

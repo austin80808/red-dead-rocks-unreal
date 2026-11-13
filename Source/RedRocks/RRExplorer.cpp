@@ -146,6 +146,9 @@ ARRExplorer::ARRExplorer()
 	JumpAction = JumpF.Object;
 	DefaultContext = ImcF.Object;
 	MouseLookContext = ImcMouseF.Object;
+	// Built by setup_credits.py; absent in a level that has no credits menu.
+	static ConstructorHelpers::FObjectFinder<UInputAction> CreditsF(TEXT("/Game/RedRocks/UI/IA_Credits.IA_Credits"));
+	CreditsAction = CreditsF.Object;
 }
 
 void ARRExplorer::BeginPlay()
@@ -161,7 +164,7 @@ void ARRExplorer::BeginPlay()
 	CollectSpots();
 	Weather = ARRWeather::Find(this);
 	SetMode(ERRMode::Walk);
-	Toast(TEXT("Welcome to Red Rocks.  H shows the controls."), 5.f);
+	Toast(TEXT("Welcome to Red Rocks.  H (or View on a controller) shows the controls."), 5.f);
 }
 
 void ARRExplorer::PawnClientRestart()
@@ -223,7 +226,7 @@ void ARRExplorer::OnJumpReleased() { StopJumping(); }
 void ARRExplorer::Tick(float Dt)
 {
 	Super::Tick(Dt);
-	PollKeys();
+	PollKeys(Dt);
 	if (bScripted)
 	{
 		MoveInput = ScriptedMove;
@@ -259,11 +262,16 @@ void ARRExplorer::Tick(float Dt)
 	UpdateHint();
 }
 
-void ARRExplorer::PollKeys()
+void ARRExplorer::PollKeys(float Dt)
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC) return;
-	if (!bScripted) bSprint = PC->IsInputKeyDown(EKeys::LeftShift) || PC->IsInputKeyDown(EKeys::RightShift);
+	NoteDevice(PC);
+	PollPad(PC, Dt);
+	if (!bScripted)
+	{
+		bSprint = bPadRun || PC->IsInputKeyDown(EKeys::LeftShift) || PC->IsInputKeyDown(EKeys::RightShift);
+	}
 	if (PC->WasInputKeyJustPressed(EKeys::E)) HandleAction(TEXT("Interact"));
 	if (PC->WasInputKeyJustPressed(EKeys::Q)) HandleAction(TEXT("Drop"));
 	if (PC->WasInputKeyJustPressed(EKeys::R)) HandleAction(TEXT("Respawn"));
@@ -277,6 +285,86 @@ void ARRExplorer::PollKeys()
 	{
 		if (PC->WasInputKeyJustPressed(Numbers[i])) RRGo(i + 1);
 	}
+}
+
+// A controller does everything the keyboard does. Move, look and jump come through Enhanced Input
+// (the template's IMC_Default maps the sticks and the bottom face button); the rest is read here, by
+// button position, so an Xbox, PlayStation or Switch pad all work the same way:
+//   left face (X / Square / Y)       ride, get off          (E)
+//   right face (B / Circle / A)      let go, cut away       (Q)
+//   top face (Y / Triangle / X)      camera                 (V)
+//   right shoulder (RB / R1 / R)     respawn                (R)
+//   left stick click (L3)            run, toggled on        (Shift, held)
+//   D-pad up / down                  night, snow            (T, N)
+//   D-pad right / left               next / previous spot   (1-9)
+//   View / Share / Minus             controls panel         (H)
+//   Menu / Options / Plus            credits                (C)
+void ARRExplorer::PollPad(APlayerController* PC, float Dt)
+{
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_FaceButton_Left)) HandleAction(TEXT("Interact"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_FaceButton_Right)) HandleAction(TEXT("Drop"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_FaceButton_Top)) HandleAction(TEXT("Camera"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_RightShoulder)) HandleAction(TEXT("Respawn"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_DPad_Up)) HandleAction(TEXT("Night"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_DPad_Down)) HandleAction(TEXT("Snow"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_DPad_Right)) RRCycleSpot(+1);
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_DPad_Left)) RRCycleSpot(-1);
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_Special_Left)) HandleAction(TEXT("Help"));
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_Special_Right) && CreditsAction)
+	{
+		// Fire the credits action as if C were pressed: BP_CreditsMenu listens for its Started event.
+		if (UEnhancedInputLocalPlayerSubsystem* Sub =
+			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+		{
+			Sub->InjectInputForAction(CreditsAction, FInputActionValue(true), {}, {});
+		}
+	}
+
+	// Run: L3 switches it on (or off again). It stays on while the stick is in use, so you need not
+	// hold a button down a long walk, and goes off when the stick rests or you leave the ground.
+	if (PC->WasInputKeyJustPressed(EKeys::Gamepad_LeftThumbstick)) bPadRun = !bPadRun;
+	PadStickRest = MoveInput.SizeSquared() < 0.01f ? PadStickRest + Dt : 0.f;
+	if (PadStickRest > PadRunRestSeconds || Mode == ERRMode::Wingsuit || Mode == ERRMode::Parachute)
+	{
+		bPadRun = false;
+	}
+}
+
+void ARRExplorer::NoteDevice(APlayerController* PC)
+{
+	static const FKey PadKeys[] = {
+		EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Left,
+		EKeys::Gamepad_FaceButton_Top, EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder,
+		EKeys::Gamepad_LeftThumbstick, EKeys::Gamepad_RightThumbstick, EKeys::Gamepad_DPad_Up,
+		EKeys::Gamepad_DPad_Down, EKeys::Gamepad_DPad_Left, EKeys::Gamepad_DPad_Right,
+		EKeys::Gamepad_Special_Left, EKeys::Gamepad_Special_Right};
+	static const FKey KeyboardKeys[] = {
+		EKeys::W, EKeys::A, EKeys::S, EKeys::D, EKeys::SpaceBar, EKeys::LeftShift, EKeys::E, EKeys::Q,
+		EKeys::R, EKeys::V, EKeys::N, EKeys::H, EKeys::T, EKeys::C, EKeys::LeftMouseButton};
+	bool bPad = false;
+	for (const FKey& K : PadKeys) bPad |= PC->WasInputKeyJustPressed(K);
+	const float Stick = FMath::Max(
+		FVector2D(PC->GetInputAnalogKeyState(EKeys::Gamepad_LeftX), PC->GetInputAnalogKeyState(EKeys::Gamepad_LeftY)).Size(),
+		FVector2D(PC->GetInputAnalogKeyState(EKeys::Gamepad_RightX), PC->GetInputAnalogKeyState(EKeys::Gamepad_RightY)).Size());
+	bPad |= Stick > 0.4f;
+	bool bKeyboard = false;
+	for (const FKey& K : KeyboardKeys) bKeyboard |= PC->WasInputKeyJustPressed(K);
+	float Mx = 0.f, My = 0.f;
+	PC->GetInputMouseDelta(Mx, My);
+	bKeyboard |= FMath::Abs(Mx) + FMath::Abs(My) > 2.f;
+	if (bPad && !bKeyboard) bUsingPad = true;
+	else if (bKeyboard && !bPad) bUsingPad = false;
+}
+
+void ARRExplorer::RRCycleSpot(int32 Step)
+{
+	if (Spots.Num() == 0) CollectSpots();
+	const int32 N = Spots.Num();
+	if (N == 0) return;
+	// From no spot yet, right goes to 1 and left to the last.
+	const int32 From = LastSpot > 0 ? LastSpot : (Step > 0 ? 0 : 1);
+	const int32 Next = ((From - 1 + Step) % N + N) % N + 1;
+	RRGo(Next);
 }
 
 void ARRExplorer::HandleAction(FName Action)
@@ -470,7 +558,7 @@ bool ARRExplorer::TryStartClimb()
 	WallNormal = Normal;
 	GetCharacterMovement()->Velocity = FVector::ZeroVector;
 	SetMode(ERRMode::Climb);
-	Toast(TEXT("Climbing.  Space leaps off, Q lets go."), 2.5f);
+	Toast(Keys(TEXT("Climbing.  Space leaps off, Q lets go."), TEXT("Climbing.  A leaps off, B lets go.")), 2.5f);
 	return true;
 }
 
@@ -607,7 +695,8 @@ void ARRExplorer::StartWingsuit()
 	// Start already leaning into the look direction so the first second flies.
 	GlideDir = (GlideDir + Look).GetSafeNormal();
 	SetMode(ERRMode::Wingsuit);
-	Toast(TEXT("Wingsuit!  Mouse steers, W dives, S flares, Space pulls the chute."), 3.5f);
+	Toast(Keys(TEXT("Wingsuit!  Mouse steers, W dives, S flares, Space pulls the chute."),
+		TEXT("Wingsuit!  Right stick steers, left stick dives and flares, A pulls the chute.")), 3.5f);
 }
 
 void ARRExplorer::TickWingsuit(float Dt)
@@ -655,7 +744,8 @@ void ARRExplorer::TickWingsuit(float Dt)
 void ARRExplorer::StartParachute()
 {
 	SetMode(ERRMode::Parachute);
-	Toast(TEXT("Canopy open.  A/D turn, W/S speed, Q cuts away."), 3.f);
+	Toast(Keys(TEXT("Canopy open.  A/D turn, W/S speed, Q cuts away."),
+		TEXT("Canopy open.  Left stick turns and trims, B cuts away.")), 3.f);
 }
 
 void ARRExplorer::TickParachute(float Dt)
@@ -716,7 +806,7 @@ void ARRExplorer::Crash(const FString& What)
 	FString Name = What;
 	if (Name.StartsWith(TEXT("Scan_ml0w")) || Name.Contains(TEXT("Rock"))) Name = TEXT("the rock");
 	else if (Name.Contains(TEXT("Terrain"))) Name = TEXT("the hillside");
-	Toast(FString::Printf(TEXT("SPLAT.  Met %s at %.0f km/h.  R to try again."), *Name, Kmh), 4.f);
+	Toast(FString::Printf(TEXT("SPLAT.  Met %s at %.0f km/h.  %s to try again."), *Name, Kmh, *Keys(TEXT("R"), TEXT("RB"))), 4.f);
 }
 
 void ARRExplorer::FellOutOfWorld(const UDamageType& DmgType)
@@ -791,16 +881,19 @@ void ARRExplorer::UpdateHint()
 	{
 	case ERRMode::Walk:
 		if (GetCharacterMovement()->IsFalling() && HeightAboveGround > WingsuitMinHeight)
-			Hint = TEXT("SPACE  wingsuit");
+			Hint = Keys(TEXT("SPACE  wingsuit"), TEXT("A  wingsuit"));
 		else if (ARRRide* Near = FindNearbyRide(400.f))
-			Hint = FString::Printf(TEXT("E  %s"), *Near->GetPrompt());
+			Hint = FString::Printf(TEXT("%s  %s"), *Keys(TEXT("E"), TEXT("X")), *Near->GetPrompt());
 		else
 			Hint = FString();
 		break;
-	case ERRMode::Climb: Hint = TEXT("WASD climb   SHIFT faster   SPACE leap off   Q let go"); break;
+	case ERRMode::Climb: Hint = Keys(TEXT("WASD climb   SHIFT faster   SPACE leap off   Q let go"),
+		TEXT("L-STICK climb   L3 faster   A leap off   B let go")); break;
 	case ERRMode::Mantle: Hint = FString(); break;
-	case ERRMode::Wingsuit: Hint = TEXT("MOUSE steer   A/D bank   W dive   S flare   SPACE parachute"); break;
-	case ERRMode::Parachute: Hint = TEXT("A/D turn   W faster   S slower   Q cut away"); break;
+	case ERRMode::Wingsuit: Hint = Keys(TEXT("MOUSE steer   A/D bank   W dive   S flare   SPACE parachute"),
+		TEXT("R-STICK steer   L-STICK bank, dive, flare   A parachute")); break;
+	case ERRMode::Parachute: Hint = Keys(TEXT("A/D turn   W faster   S slower   Q cut away"),
+		TEXT("L-STICK turn, faster, slower   B cut away")); break;
 	case ERRMode::Ride: Hint = Ride ? Ride->GetRideHint() : FString(); break;
 	}
 }
@@ -892,7 +985,8 @@ void ARRExplorer::RRNight()
 	if (ARRWeather* W = ARRWeather::Find(this))
 	{
 		W->ToggleNight();
-		Toast(W->IsNight() ? TEXT("Night falls.  The band is on: press 1 for the stage.") : TEXT("Morning."), 3.f);
+		Toast(W->IsNight() ? Keys(TEXT("Night falls.  The band is on: press 1 for the stage."),
+			TEXT("Night falls.  The band is on: D-pad right to the stage.")) : FString(TEXT("Morning.")), 3.f);
 	}
 }
 

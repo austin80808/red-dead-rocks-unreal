@@ -57,13 +57,23 @@ void ARRHUD::DrawHUD()
 	// Help, right side.
 	if (P->bShowHelp)
 	{
-		FString Help = TEXT("CONTROLS   (H hides)\n")
+		const bool bPad = P->UsingPad();
+		FString Help = bPad ? FString(TEXT("CONTROLS   (VIEW hides)\n")
+			TEXT("L-STICK move   L3 run   A jump\n")
+			TEXT("R-STICK look\n")
+			TEXT("Walk into rock to climb\n")
+			TEXT("A in the air: wingsuit, again: chute\n")
+			TEXT("X ride a cart, sled or tube   B let go\n")
+			TEXT("D-PAD DOWN snow   D-PAD UP night + concert\n")
+			TEXT("Y camera   RB respawn   MENU credits\n")
+			TEXT("(PlayStation: X=Square A=Cross B=Circle Y=Triangle)\n\nGO TO   (D-PAD LEFT / RIGHT)\n"))
+		: FString(TEXT("CONTROLS   (H hides)\n")
 			TEXT("WASD move   SHIFT run   SPACE jump\n")
 			TEXT("Walk into rock to climb\n")
 			TEXT("SPACE in the air: wingsuit, again: chute\n")
 			TEXT("E ride a cart or sled\n")
 			TEXT("N snow   T night + concert\n")
-			TEXT("V camera   R respawn   C credits\n\nGO TO\n");
+			TEXT("V camera   R respawn   C credits\n\nGO TO\n"));
 		const TArray<ARRSpot*>& Spots = P->GetSpots();
 		for (int32 i = 0; i < Spots.Num() && i < 9; ++i)
 		{
