@@ -316,7 +316,7 @@ void ARRExplorer::PollPad(APlayerController* PC, float Dt)
 		if (UEnhancedInputLocalPlayerSubsystem* Sub =
 			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
 		{
-			Sub->InjectInputForAction(CreditsAction, FInputActionValue(true));
+			Sub->InjectInputForAction(CreditsAction, FInputActionValue(true), {}, {});
 		}
 	}
 
