@@ -69,6 +69,13 @@ public:
 
 	bool bShowHelp = true;
 
+	/** True while a game controller was the last thing used; hints and the help panel then name its buttons. */
+	UFUNCTION(BlueprintPure, Category = "RedRocks") bool UsingPad() const { return bUsingPad; }
+	/** Kb when the keyboard was used last, Pad when a controller was. */
+	FString Keys(const TCHAR* Kb, const TCHAR* Pad) const { return bUsingPad ? FString(Pad) : FString(Kb); }
+	/** Go to the next (+1) or previous (-1) spot after the last one, wrapping (D-pad right / left). */
+	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRCycleSpot(int32 Step);
+
 	// --- Console commands and test hooks -------------------------------------
 	/** Teleport to spot N (1-based, the number keys do the same). */
 	UFUNCTION(Exec, BlueprintCallable, Category = "RedRocks") void RRGo(int32 SpotNumber);
@@ -104,6 +111,8 @@ protected:
 	UPROPERTY() TObjectPtr<UInputAction> JumpAction;
 	UPROPERTY() TObjectPtr<UInputMappingContext> DefaultContext;
 	UPROPERTY() TObjectPtr<UInputMappingContext> MouseLookContext;
+	/** The credits menu's action (setup_credits.py maps C to it); a controller's Menu button fires it too. */
+	UPROPERTY() TObjectPtr<UInputAction> CreditsAction;
 
 	// Tuning, in centimetres and seconds.
 	// A brisk walk (6.5 km/h) and, on Shift, a run (19 km/h): a person's pace, not a vehicle's.
@@ -127,7 +136,7 @@ private:
 	void OnJumpPressed();
 	void OnJumpReleased();
 
-	void PollKeys();
+	void PollKeys(float Dt);
 	void HandleAction(FName Action);
 	void SetMode(ERRMode NewMode);
 	void UpdateGroundHeight();
@@ -162,6 +171,13 @@ private:
 	ERRMode Mode = ERRMode::Walk;
 	FVector2D MoveInput = FVector2D::ZeroVector;
 	bool bSprint = false;
+	// Controller: L3 turns running on; it stays on until the stick rests for PadRunRestSeconds or you take off.
+	bool bUsingPad = false;
+	bool bPadRun = false;
+	float PadStickRest = 0.f;
+	static constexpr float PadRunRestSeconds = 0.5f;
+	void PollPad(APlayerController* PC, float Dt);
+	void NoteDevice(APlayerController* PC);
 	bool bScripted = false;
 	FVector2D ScriptedMove = FVector2D::ZeroVector;
 	bool bScriptedSprint = false;
